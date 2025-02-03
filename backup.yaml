@@ -1,0 +1,58 @@
+- name: Backup Script
+  hosts: localhost
+  vars:
+    base_backup_dir: "{{ ansible_env.HOME }}/backup_archive"
+    target_folder: "{{ ansible_env.HOME }}/personal"
+
+  tasks:
+    # Ensure the backup directory exists to store the archives
+    - name: Ensure the main backup directory exists
+      ansible.builtin.file:
+        path: "{{ base_backup_dir }}"
+        state: directory
+        mode: "0755"
+
+    # Create a timestamp to distinguish backups
+    - name: Generate timestamp for backup folder
+      set_fact:
+        current_timestamp: "{{ ansible_date_time.year }}{{ ansible_date_time.month }}{{ ansible_date_time.day }}{{ ansible_date_time.hour }}{{ ansible_date_time.minute }}{{ ansible_date_time.second }}"
+
+    # Establish a unique backup directory for this execution
+    - name: Create a new backup directory with timestamp
+      ansible.builtin.file:
+        path: "{{ base_backup_dir }}/backup_{{ current_timestamp }}"
+        state: directory
+        mode: "0755"
+
+    # Transfer files from the personal directory to the newly created backup location
+    - name: Copy contents from personal folder to the new backup directory
+      ansible.builtin.copy:
+        src: "{{ target_folder }}/"
+        dest: "{{ base_backup_dir }}/backup_{{ current_timestamp }}/"
+        remote_src: yes
+
+    # Locate all existing backups that follow the naming convention
+    - name: Retrieve existing backups matching the pattern
+      ansible.builtin.find:
+        paths: "{{ base_backup_dir }}"
+        patterns: "backup_*"
+        file_type: directory
+      register: found_backups
+
+    # Organize backups based on modification time in descending order
+    - name: Sort backups based on modification time (newest first)
+      set_fact:
+        ordered_backups: "{{ found_backups.files | sort(attribute='mtime', reverse=true) }}"
+
+    # Display the list of currently stored backups for reference
+    - name: Display list of stored backups (sorted)
+      debug:
+        msg: "Existing backups: {{ ordered_backups | map(attribute='path') | list }}"
+
+    # Remove older backups to maintain storage efficiency by keeping only the three most recent ones
+    - name: Remove excess backups, keeping only the latest 3
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ ordered_backups[3:] }}"
+      when: found_backups.files | length > 3
